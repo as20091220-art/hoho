@@ -1,0 +1,297 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>我要餓鼠了 — 蘋蘋菜單系統</title>
+  <style>
+    :root{
+      --max-width:720px;
+      --accent:#ff6b6b;
+      --muted:#666;
+      --bg:#fff7f7;
+    }
+    body{
+      font-family: "Arial", "Helvetica", sans-serif;
+      max-width:var(--max-width);
+      margin:24px auto;
+      padding:20px;
+      background:linear-gradient(180deg,#fff,#fff7f7);
+      color:#222;
+    }
+    h1{margin:0 0 8px 0;color:var(--accent)}
+    p{margin:0 0 16px 0;color:var(--muted)}
+    .controls{display:flex;gap:8px;align-items:center}
+    #question-box{
+      flex:1;
+      padding:10px;
+      border:1px solid #ddd;
+      border-radius:6px;
+      font-size:16px;
+    }
+    button{
+      padding:10px 12px;
+      border-radius:6px;
+      border:none;
+      cursor:pointer;
+      background:var(--accent);
+      color:white;
+      font-weight:600;
+    }
+    button.secondary{
+      background:#6b8cff;
+    }
+    #answer-display{
+      border:1px solid #eee;
+      padding:12px;
+      min-height:100px;
+      margin-top:20px;
+      border-radius:8px;
+      background:#fff;
+      box-shadow:0 2px 6px rgba(0,0,0,0.03);
+    }
+    .meta{color:var(--muted);font-size:13px;margin-top:6px}
+    #history{margin-top:12px;display:flex;flex-direction:column;gap:6px}
+    .hist-item{font-size:14px;color:#444; background:#fafafa;padding:8px;border-radius:6px;border:1px solid #f0f0f0}
+    .small{font-size:12px;color:var(--muted)}
+    .filters{margin-top:12px;display:flex;gap:8px;flex-wrap:wrap}
+    .chip{
+      padding:6px 8px;border-radius:16px;border:1px solid #ddd;background:#fff;font-size:13px;cursor:pointer;
+    }
+    .chip.active{background:var(--accent);color:#fff;border-color:var(--accent)}
+    @media (max-width:560px){
+      body{padding:12px}
+      .controls{flex-direction:column;align-items:stretch}
+    }
+  </style>
+</head>
+<body>
+  <h1>歡迎來到蘋蘋菜單系統</h1>
+  <p>本人在不吃飯會餓扁 — 輸入想吃的類型或直接按「送出」由我選！(可按 Enter)</p>
+
+  <div class="controls" role="search" aria-label="選擇菜單">
+    <input id="question-box" type="text" placeholder="請輸入今天吃什麼？（例：素、肉、日式、想吃辣）" aria-label="今天想吃什麼">
+    <button id="submit-btn" onclick="answerQuestion()">送出</button>
+    <button id="random-btn" class="secondary" onclick="randomSuggest()" title="不想打字就亂給我一個">隨機給我</button>
+  </div>
+
+  <div class="filters" aria-hidden="false" id="filter-row">
+    <button class="chip" data-filter="all" onclick="toggleFilter(event)" aria-pressed="true">全部</button>
+    <button class="chip" data-filter="vegetarian" onclick="toggleFilter(event)">素食</button>
+    <button class="chip" data-filter="meat" onclick="toggleFilter(event)">葷食</button>
+    <button class="chip" data-filter="chinese" onclick="toggleFilter(event)">中式</button>
+    <button class="chip" data-filter="japanese" onclick="toggleFilter(event)">日式</button>
+    <button class="chip" data-filter="fastfood" onclick="toggleFilter(event)">快餐</button>
+    <button class="chip" data-filter="healthy" onclick="toggleFilter(event)">健康</button>
+  </div>
+
+  <div id="answer-display" role="status" aria-live="polite">
+    不管你寫什麼，我現在都會餓鼠了！
+  </div>
+
+  <div class="meta small" id="meta-line">建議會根據你輸入的關鍵字與偏好篩選。</div>
+
+  <div id="history" aria-label="選過的建議歷史">
+    <!-- 歷史項目會出現在這裡 -->
+  </div>
+
+<script>
+  // 食物資料（可自由擴充）
+  const MENU = [
+    {name:"不要米苔目", tags:["meat","chinese"]},
+    {name:"滷肉飯", tags:["meat","chinese"]},
+    {name:"沒胃口'但想吃'", tags:["meat","chinese"]},
+    {name:"你隨意", tags:["meat","japanese"]},
+    {name:"我不知道", tags:["meat","japanese","healthy"]},
+    {name:"拉麵", tags:["meat","japanese"]},
+    {name:"蔬食便當", tags:["vegetarian","healthy","chinese"]},
+    {name:"咖哩便當", tags:["vegetarian","healthy"]},
+    {name:"炸雞腿便當", tags:["meat","fastfood"]},
+    {name:"隨便", tags:["meat","fastfood"]},
+    {name:"看你心情", tags:["meat","fastfood"]},
+    {name:"炸雞腿便當", tags:["meat","japanese"]},
+    {name:"椒麻雞便當", tags:["vegetarian","chinese","healthy"]},
+    {name:"海陸雙拼", tags:["vegetarian","chinese","fastfood"]},
+    {name:"鍋貼/水餃", tags:["meat","chinese","fastfood"]},
+    {name:"直火烤肉", tags:["vegetarian","chinese"]},
+    {name:"媽媽煮", tags:["meat","fastfood"]},
+    {name:"招牌便當", tags:["meat","chinese","spicy"]},
+    {name:"紐澳良便當", tags:["meat","chinese","spicy"]},
+    {name:"滷雞腿", tags:["vegetarian","chinese","fastfood"]}
+  ];
+
+  const state = {
+    activeFilters: new Set(["all"]),
+    history: loadHistory()
+  };
+
+  const answerDisplay = document.getElementById('answer-display');
+  const inputBox = document.getElementById('question-box');
+  const historyEl = document.getElementById('history');
+
+  // Enter 鍵送出
+  inputBox.addEventListener('keydown', (e)=>{
+    if(e.key === 'Enter'){
+      e.preventDefault();
+      answerQuestion();
+    }
+  });
+
+  // 切換 filter
+  function toggleFilter(ev){
+    const btn = ev.currentTarget;
+    const f = btn.dataset.filter;
+    // 特殊處理全部按鈕
+    if(f === 'all'){
+      // 清除所有其他 filter
+      document.querySelectorAll('.chip').forEach(c=>{
+        if(c.dataset.filter !== 'all') c.classList.remove('active'), c.setAttribute('aria-pressed','false');
+      });
+      btn.classList.add('active'); btn.setAttribute('aria-pressed','true');
+      state.activeFilters = new Set(['all']);
+      return;
+    }
+    // 取消 ALL
+    document.querySelector('.chip[data-filter="all"]').classList.remove('active');
+    // toggle this filter
+    if(state.activeFilters.has(f)){
+      state.activeFilters.delete(f);
+      btn.classList.remove('active');
+      btn.setAttribute('aria-pressed','false');
+    } else {
+      state.activeFilters.add(f);
+      btn.classList.add('active');
+      btn.setAttribute('aria-pressed','true');
+    }
+    // 若沒有任何小分類被選，恢復 ALL
+    const any = [...state.activeFilters].some(x=>x!=='all');
+    if(!any){
+      document.querySelector('.chip[data-filter="all"]').classList.add('active');
+      state.activeFilters = new Set(['all']);
+      document.querySelector('.chip[data-filter="all"]').setAttribute('aria-pressed','true');
+    }
+  }
+
+  // 回答主流程
+  function answerQuestion(){
+    const q = inputBox.value.trim().toLowerCase();
+    let candidates = MENU.slice();
+
+    // 1) 若輸入帶有關鍵字（簡單判斷）
+    if(q){
+      // 文字對應
+      const mapping = {
+        '素': 'vegetarian',
+        '不吃肉': 'vegetarian',
+        '肉': 'meat',
+        '葷': 'meat',
+        '中': 'chinese',
+        '中式':'chinese',
+        '日': 'japanese',
+        '日式':'japanese',
+        '快': 'fastfood',
+        '快餐':'fastfood',
+        '健康':'healthy',
+        '少油':'healthy',
+        '辣':'spicy'
+      };
+      for(const key in mapping){
+        if(q.includes(key)){
+          candidates = candidates.filter(m => m.tags.includes(mapping[key]));
+        }
+      }
+      // 若仍有文字（如想吃某食物名），嘗試以名字匹配
+      const words = q.split(/\s+/).filter(Boolean);
+      if(words.length){
+        const byName = MENU.filter(m=> words.some(w => m.name.toLowerCase().includes(w)));
+        if(byName.length) candidates = byName;
+      }
+    }
+
+    // 2) 應用篩選器
+    if(!state.activeFilters.has('all')){
+      const filters = [...state.activeFilters];
+      candidates = candidates.filter(m => filters.every(f => m.tags.includes(f)));
+    }
+
+    // 3) 若沒有候選，顯示 fallback
+    let chosen;
+    if(candidates.length === 0){
+      answerDisplay.innerHTML = `<strong>抱歉，找不到符合條件的選項 😢</strong><div class="small" style="margin-top:8px">建議：清空輸入或改選其他篩選條件。</div>`;
+      return;
+    } else {
+      chosen = candidates[Math.floor(Math.random()*candidates.length)];
+    }
+
+    // 4) 顯示建議（加上 emoji）
+    const emojiMap = {
+      'vegetarian':'🥗','meat':'🍖','chinese':'🥢','japanese':'🍣','fastfood':'🍔','healthy':'💪','spicy':'🌶️'
+    };
+    const tagsEmoji = Array.from(new Set(chosen.tags.map(t=>emojiMap[t]||''))).join(' ');
+    answerDisplay.innerHTML = `<div style="font-size:20px;font-weight:700">${chosen.name} ${tagsEmoji}</div>
+      <div class="small" style="margin-top:8px">來源：隨機推薦 · 共 ${candidates.length} 個符合候選</div>
+      <div style="margin-top:10px"><button onclick="saveFavorite('${escapeHtml(chosen.name)}')">加入我的最愛</button>
+      <button style="margin-left:8px" onclick="randomSuggest()">再給我一個</button></div>`;
+
+    // 5) 記錄歷史
+    pushHistory(chosen.name);
+  }
+
+  // 隨機建議（忽略輸入）
+  function randomSuggest(){
+    const all = MENU.slice();
+    const chosen = all[Math.floor(Math.random()*all.length)];
+    inputBox.value = '';
+    state.activeFilters = new Set(['all']);
+    // reset filter UI
+    document.querySelectorAll('.chip').forEach(c=>{
+      c.classList.toggle('active', c.dataset.filter === 'all');
+      c.setAttribute('aria-pressed', c.dataset.filter === 'all' ? 'true' : 'false');
+    });
+    answerDisplay.innerHTML = `<div style="font-size:20px;font-weight:700">${chosen.name} ${chosen.tags.includes('vegetarian') ? '🥗':''}</div>
+      <div class="small" style="margin-top:8px">隨機推薦</div>
+      <div style="margin-top:10px"><button onclick="saveFavorite('${escapeHtml(chosen.name)}')">加入我的最愛</button>
+      <button style="margin-left:8px" onclick="randomSuggest()">再給我一個</button></div>`;
+    pushHistory(chosen.name);
+  }
+
+  // 儲存最愛（簡易示範：也把最愛放入歷史）
+  function saveFavorite(name){
+    alert('已加入最愛：' + name);
+    pushHistory(name + '（最愛）');
+  }
+
+  // 簡單歷史管理（localStorage）
+  function pushHistory(item){
+    state.history.unshift({text:item, time: new Date().toISOString()});
+    if(state.history.length > 10) state.history.length = 10;
+    saveHistory(state.history);
+    renderHistory();
+  }
+  function saveHistory(arr){ localStorage.setItem('menu_history_v1', JSON.stringify(arr)); }
+  function loadHistory(){ try{ const s = localStorage.getItem('menu_history_v1'); return s ? JSON.parse(s) : []; }catch(e){return []} }
+  function renderHistory(){
+    historyEl.innerHTML = '';
+    if(state.history.length === 0) {
+      historyEl.innerHTML = `<div class="small">還沒選過任何東西，建議按「隨機給我」開始。</div>`;
+      return;
+    }
+    state.history.forEach(h=>{
+      const d = new Date(h.time);
+      const el = document.createElement('div');
+      el.className = 'hist-item';
+      el.innerHTML = `<div style="font-weight:600">${escapeHtml(h.text)}</div><div class="small" style="margin-top:6px">${d.toLocaleString()}</div>`;
+      historyEl.appendChild(el);
+    });
+  }
+
+  // Utility: 逃逸 HTML（避免注入）
+  function escapeHtml(s){
+    return (s+'').replace(/[&<>"']/g, function(m){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m] });
+  }
+
+  // 初始化
+  renderHistory();
+</script>
+</body>
+</html>
